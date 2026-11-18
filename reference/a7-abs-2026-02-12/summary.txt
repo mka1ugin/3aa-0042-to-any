@@ -1,0 +1,14 @@
+The following changes identified by Software Version Management (SVM) have been carried out:
+
+
+Codes:
+03 - Brake electronics:
+00000000000000000000 -> 07A18702E085E140DB00
+
+Parameter settings:
+46 - Convenience system central module:
+4G8909501B ; 0040; 000000011E68650E -> 4G8909501B ; 0041; 000000011E68650E
+
+5F - Information electronics 1:
+4G8909545G ; 0044; 00001402510602B3 -> 4G8909545G ; 0042; 00001402510602B3
+
