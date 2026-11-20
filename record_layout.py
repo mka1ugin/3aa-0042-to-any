@@ -118,8 +118,8 @@ CODING_FIELDS: tuple[Field, ...] = (
     Field("Вариант рынка", 8, True, kind=KIND_CHOICE),
     Field("Байт 9", 9, False),
     Field("Номинальная мощность, кВт", 10, True, size=2, kind=KIND_UINT),
-    Field("Минимальная мощность по CAN, кВт", 12, True, size=2, kind=KIND_UINT),
-    Field("Максимальная мощность по CAN, кВт", 14, True, size=2, kind=KIND_UINT),
+    Field("Мощность с CAN min, кВт", 12, True, size=2, kind=KIND_UINT),
+    Field("Мощность с CAN max, кВт", 14, True, size=2, kind=KIND_UINT),
     Field("Объём двигателя", 16, True, kind=KIND_VOLUME),
     Field("Байт 17", 17, True, kind=KIND_CHOICE),
     Field("Масса автомобиля, кг", 18, True, size=2, kind=KIND_UINT),
@@ -128,3 +128,26 @@ CODING_FIELDS: tuple[Field, ...] = (
 )
 
 validate_fields(CODING_FIELDS)
+
+# 3C0698109__0017: из записи убраны старые байт 7 и байт 9, номинальная мощность — один байт.
+CODING_FIELDS_0017: tuple[Field, ...] = (
+    Field("2й байт кодировки", 0, False),
+    Field("Байт 1", 1, True, kind=KIND_CHOICE),
+    Field("Байт 2", 2, True, kind=KIND_CHOICE),
+    Field("Байт 3", 3, True, kind=KIND_CHOICE),
+    Field("Тормоза 1", 4, True, kind=KIND_CHOICE),
+    Field("Тормоза 2", 5, True, kind=KIND_CHOICE),
+    Field("Тип трансмиссии", 6, True, kind=KIND_ENUM, labels=TRANSMISSION),
+    Field("Вариант рынка", 7, True, kind=KIND_CHOICE),
+    Field("Байт 8", 8, False),
+    Field("Номинальная мощность, кВт", 9, True, kind=KIND_UINT),
+    Field("Мощность с CAN min, кВт", 10, True, size=2, kind=KIND_UINT),
+    Field("Мощность с CAN max, кВт", 12, True, size=2, kind=KIND_UINT),
+    Field("Объём двигателя", 14, True, kind=KIND_VOLUME),
+    Field("Байт 15", 15, True, kind=KIND_CHOICE),
+    Field("Масса автомобиля, кг", 16, True, size=2, kind=KIND_UINT),
+    Field("Характеристика вмешательства ESP", 18, True, kind=KIND_CHOICE),
+    Field("Байт 19", 19, False),
+)
+
+validate_fields(CODING_FIELDS_0017)

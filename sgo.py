@@ -105,11 +105,11 @@ def require_same_header(raw: bytes, reference: bytes) -> None:
         )
 
 
-def calibration_block(document: SgoDocument) -> Datablock:
-    block = document.block(CALIBRATION_BLOCK_INDEX)
+def calibration_block(document: SgoDocument, index: int = CALIBRATION_BLOCK_INDEX) -> Datablock:
+    block = document.block(index)
     if block.start_address != CALIBRATION_START or block.end_address != CALIBRATION_END:
         raise ValueError(
-            f"Блок №{CALIBRATION_BLOCK_INDEX} занимает "
+            f"Блок №{index} занимает "
             f"0x{block.start_address:06X}–0x{block.end_address:06X}, "
             f"ожидается 0x{CALIBRATION_START:06X}–0x{CALIBRATION_END:06X}"
         )
@@ -170,9 +170,9 @@ def validate_bin_length(start_addr: int, end_addr: int, actual_size: int) -> int
         raise ValueError(
             f"Длина блока {block_len} нечётная, сумму 16-битных слов посчитать нельзя"
         )
-    if actual_size != block_len:
+    if actual_size < block_len:
         raise ValueError(
-            "Размер образа не совпадает с длиной по адресам.\n"
+            "Образ короче длины по адресам.\n"
             f"  Расчётная длина: {block_len} байт (0x{block_len:X})\n"
             f"  Фактический размер: {actual_size} байт (0x{actual_size:X})"
         )
@@ -205,6 +205,44 @@ def apply_bin_checksum(data: bytearray) -> int:
     calculated = calc_bin_checksum(data)["calculated"]
     struct.pack_into(">H", data, BIN_CHECKSUM_OFFSET, calculated)
     return calculated
+
+
+def is_bin_image(data: bytes) -> bool:
+    try:
+        calc_bin_checksum(data)
+    except ValueError:
+        return False
+    return True
+
+
+def recalculate_all_checksums(raw: bytes, replacements: dict[int, bytes] | None = None) -> bytes:
+    """Пересчитать КС bin, КС каждого блока SGO и КС файла.
+
+    replacements — уже расшифрованные образы отдельных блоков (например, правленая
+    таблица блока №1). У образа с заголовком BIN сначала чинится слово по смещению
+    0x0004, затем сумма блока и сумма всего контейнера.
+    """
+    document = parse_sgo(raw)
+    packed = bytearray(raw)
+    overrides = replacements or {}
+    for block in document.blocks:
+        if block.index in overrides:
+            image = bytearray(overrides[block.index])
+            if len(image) != block.size:
+                raise ValueError(
+                    f"Размер образа {len(image)} не равен длине блока №{block.index} ({block.size})"
+                )
+        else:
+            image = decode_block(document, block)
+        if is_bin_image(image):
+            apply_bin_checksum(image)
+        encoded = bytes(value ^ 0xFF for value in image)
+        packed[block.payload_offset : block.payload_offset + block.size] = encoded
+        block_checksum = calculated_block_checksum(image)
+        packed[block.offset + BLOCK_CHECKSUM_OFFSET] = (block_checksum >> 8) & 0xFF
+        packed[block.offset + BLOCK_CHECKSUM_OFFSET + 1] = block_checksum & 0xFF
+    struct.pack_into("<I", packed, FILE_CHECKSUM_OFFSET, calculated_file_checksum(packed))
+    return bytes(packed)
 
 
 def build_edited_sgo(

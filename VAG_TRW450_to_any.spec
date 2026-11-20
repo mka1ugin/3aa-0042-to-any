@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Сборка exe идёт через build_exe.bat (flet pack). Этот spec — запасной путь PyInstaller.
 from pathlib import Path
 
 root = Path(SPECPATH)
@@ -7,7 +8,7 @@ a = Analysis(
     ["abs_editor.py"],
     pathex=[str(root)],
     binaries=[],
-    datas=[("assets/app.ico", "assets")],
+    datas=[("assets/app.ico", "assets"), ("HELP.md", ".")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
