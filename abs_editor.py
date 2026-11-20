@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Редактор таблицы констант ABS 3AA в контейнере SGO.
 
-Запись — 22 байта. Раскладка полей задана списком FIELDS и действительна
-только для прошивки с заголовком эталона 3AA698109__0042.
+Запись — 22 байта. Раскладка полей задана списком FIELDS.
+Смещение таблицы зависит от прошивки: его задаёт профиль в reference_header.
 Многобайтовые числа хранятся big-endian.
 """
 
@@ -16,9 +16,19 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import sgo
-from reference_header import REFERENCE_HEADER
+from record_layout import (
+    CODING_FIELDS,
+    KIND_CHOICE,
+    KIND_ENUM,
+    KIND_UINT,
+    KIND_VOLUME,
+    Field,
+    bind_choices,
+    layout_key,
+)
+from reference_header import match_firmware, supported_firmware_names
 
-APP_TITLE = "3AA__0042 to any by MKa1ugin"
+APP_TITLE = "VAG TRW450 to any"
 DEFAULT_SGO = Path(r"D:\YandexDisk\VAG\ABS\SGO\3AA698109__0042.sgo")
 
 TABLE_START = 0x3A31C
@@ -26,99 +36,8 @@ TABLE_END = 0x3A6CD
 RECORD_SIZE = 22
 RECORD_COUNT = (TABLE_END - TABLE_START + 1) // RECORD_SIZE
 
-KIND_HEX = "hex"
-KIND_CHOICE = "choice"
-KIND_ENUM = "enum"
-KIND_UINT = "uint"
-KIND_VOLUME = "volume"
-
-TRANSMISSION = (
-    (0x00, "Механика 2WD"),
-    (0x10, "Автомат 2WD"),
-    (0x40, "DSG 2WD"),
-    (0x02, "Механика 4WD"),
-    (0x12, "Автомат 4WD"),
-    (0x42, "DSG 4WD"),
-)
-
-
-@dataclass(frozen=True)
-class Field:
-    name: str
-    offset: int
-    editable: bool
-    size: int = 1
-    kind: str = KIND_HEX
-    choices: tuple[int, ...] = ()
-    labels: tuple[tuple[int, str], ...] = ()
-
-    def read(self, record: bytes) -> int:
-        return int.from_bytes(record[self.offset : self.offset + self.size], "big")
-
-    def format(self, record: bytes) -> str:
-        value = self.read(record)
-        if self.kind == KIND_ENUM:
-            return dict(self.labels).get(value, f"{value:02X}")
-        if self.kind == KIND_UINT or self.kind == KIND_VOLUME:
-            return str(value * 100 if self.kind == KIND_VOLUME else value)
-        return f"{value:0{self.size * 2}X}"
-
-    def choices_for(self, current: int) -> tuple[str, ...]:
-        if self.kind == KIND_ENUM:
-            labels = [label for _value, label in self.labels]
-            current_label = dict(self.labels).get(current, f"{current:02X}")
-        else:
-            labels = [f"{item:02X}" for item in self.choices]
-            current_label = f"{current:02X}"
-        if current_label not in labels:
-            labels.append(current_label)
-        return tuple(labels)
-
-
-def _choice(*values: int) -> tuple[int, ...]:
-    return tuple(values)
-
-
-def _span(start: int, end: int) -> tuple[int, ...]:
-    return tuple(range(start, end + 1))
-
-
-# Раскладка одной записи. size > 1 — целое big-endian.
-FIELDS: list[Field] = [
-    Field("2й байт кодировки", 0, False),
-    Field("Байт 1", 1, True, kind=KIND_CHOICE, choices=_choice(0x00, 0x01, 0x02)),
-    Field("Байт 2", 2, True, kind=KIND_CHOICE, choices=_span(0x01, 0x0A)),
-    Field("Байт 3", 3, True, kind=KIND_CHOICE, choices=_span(0x00, 0x03)),
-    Field("Тормоза 1", 4, True, kind=KIND_CHOICE, choices=_choice(0x0C, 0x0D, 0x0E)),
-    Field("Тормоза 2", 5, True, kind=KIND_CHOICE, choices=_choice(0x0C, 0x0D, 0x0E)),
-    Field("Тип трансмиссии", 6, True, kind=KIND_ENUM, labels=TRANSMISSION),
-    Field("Байт 7", 7, True, kind=KIND_CHOICE, choices=_choice(0x03, 0x05)),
-    Field("Вариант рынка", 8, True, kind=KIND_CHOICE, choices=_choice(0xAA, 0xBB)),
-    Field("Байт 9", 9, False),
-    Field("Номинальная мощность, кВт", 10, True, size=2, kind=KIND_UINT),
-    Field("Минимальная мощность по CAN, кВт", 12, True, size=2, kind=KIND_UINT),
-    Field("Максимальная мощность по CAN, кВт", 14, True, size=2, kind=KIND_UINT),
-    Field("Объём двигателя", 16, True, kind=KIND_VOLUME),
-    Field("Байт 17", 17, True, kind=KIND_CHOICE, choices=_choice(0x02, 0x05)),
-    Field("Масса автомобиля, кг", 18, True, size=2, kind=KIND_UINT),
-    Field("Пороги вмешательства ESP", 20, True, kind=KIND_CHOICE, choices=_span(0x00, 0x06)),
-    Field("Байт 21", 21, False),
-]
-
-
-def validate_fields(fields: list[Field]) -> None:
-    cursor = 0
-    for field in fields:
-        if field.offset != cursor or field.size < 1:
-            raise ValueError(f"Поле «{field.name}» нарушает раскладку записи")
-        cursor += field.size
-    if cursor != RECORD_SIZE:
-        raise ValueError(f"Длина полей {cursor} не равна {RECORD_SIZE} байтам записи")
-
-
-validate_fields(FIELDS)
-if (TABLE_END - TABLE_START + 1) != RECORD_COUNT * RECORD_SIZE:
-    raise ValueError("Диапазон таблицы не делится на записи по 22 байта")
+# Совместимость со старыми тестами: общая раскладка четырёх текущих прошивок.
+FIELDS = CODING_FIELDS
 
 
 @dataclass
@@ -248,6 +167,8 @@ class Editor(tk.Tk):
         self._configure_style()
 
         self.document: sgo.SgoDocument | None = None
+        self.profile = None
+        self.fields: tuple[Field, ...] = CODING_FIELDS
         self.block: sgo.Datablock | None = None
         self.path: Path | None = None
         self.image = bytearray()
@@ -268,7 +189,7 @@ class Editor(tk.Tk):
         self.block_var = tk.StringVar(value="Блок №1: —")
         self.table_var = tk.StringVar(
             value=(
-                f"Таблица: bin 0x{TABLE_START:05X}–0x{TABLE_END:05X}, "
+                f"Таблица: bin 0x{TABLE_START:06X}–0x{TABLE_END:06X}, "
                 f"{RECORD_COUNT} записей по {RECORD_SIZE} байта"
             )
         )
@@ -277,10 +198,9 @@ class Editor(tk.Tk):
         self.file_cs_var = tk.StringVar(value="КС файла SGO: —")
         self.dirty_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(
-            value="Откройте SGO-файл версии 3AA698109__0042."
+            value="Откройте SGO поддерживаемой версии: 3AA 0042, 3AA 0023, 3AA 0061, 5N0 0023, 5N0 0161 или 8U0 0406."
         )
 
-        self._columns = self._build_columns()
         self._build_ui()
         self._bind_keys()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -315,8 +235,8 @@ class Editor(tk.Tk):
     def _build_columns(self) -> list[Column]:
         cell_font = tkfont.Font(family="Consolas", size=10)
         columns = []
-        for index, field in enumerate(FIELDS):
-            if field.kind == KIND_ENUM:
+        for index, field in enumerate(self.fields):
+            if field.kind == KIND_ENUM and field.labels:
                 width = max(cell_font.measure(label) for _value, label in field.labels) + 22
             elif field.kind in {KIND_UINT, KIND_VOLUME}:
                 width = 68
@@ -324,6 +244,13 @@ class Editor(tk.Tk):
                 width = 48
             columns.append(Column(f"f{index}", field.name, width, index, field.editable))
         return columns
+
+    def _install_fields(self, fields: tuple[Field, ...]) -> None:
+        key = layout_key(fields)
+        self.fields = fields
+        if key != getattr(self, "_layout_key", None):
+            self._layout_key = key
+            self._mount_tree()
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -355,9 +282,9 @@ class Editor(tk.Tk):
         self.reset_button.grid(row=0, column=1)
 
         hint = (
-            "Двойной щелчок, F2 или Enter — правка. Списки не вводятся вручную. "
+            "Двойной щелчок, F2 или Enter — правка. Списки берутся из открытой прошивки. "
             "Мощность и масса — десятичные числа, объём двигателя — в см³ с округлением до 100. "
-            "«2й байт кодировки», «Байт 9» и «Байт 21» только для чтения."
+            "Поля только для чтения не меняются."
         )
         ttk.Label(self, text=hint, wraplength=1200, padding=(12, 0, 12, 6), foreground="#444444").grid(
             row=1, column=0, sticky="ew"
@@ -368,19 +295,35 @@ class Editor(tk.Tk):
         table.rowconfigure(1, weight=1)
         table.columnconfigure(0, weight=1)
 
-        header_font = tkfont.Font(family="Segoe UI", size=9)
-        self._header_height = max(header_font.measure(field.name) for field in FIELDS) + 14
+        self._table = table
+        self._header_font = tkfont.Font(family="Segoe UI", size=9)
         self.header = tk.Canvas(
             table,
-            height=self._header_height,
+            height=40,
             highlightthickness=0,
             borderwidth=0,
             bg="#E4E4E4",
         )
         self.header.grid(row=0, column=0, sticky="ew")
+        self.y_scroll = ttk.Scrollbar(table, orient="vertical")
+        self.x_scroll = ttk.Scrollbar(table, orient="horizontal", command=self._xview)
+        self.y_scroll.grid(row=1, column=1, sticky="ns")
+        self.x_scroll.grid(row=2, column=0, sticky="ew")
+        self._install_fields(self.fields)
 
+        status = ttk.Label(self, textvariable=self.status_var, padding=(12, 6), anchor="w")
+        status.grid(row=3, column=0, sticky="ew")
+        self._set_actions_enabled(False)
+
+    def _mount_tree(self) -> None:
+        if getattr(self, "tree", None) is not None:
+            self.tree.destroy()
+        self._columns = self._build_columns()
+        names = [field.name for field in self.fields] or [" "]
+        self._header_height = max(self._header_font.measure(name) for name in names) + 14
+        self.header.configure(height=self._header_height)
         self.tree = ttk.Treeview(
-            table,
+            self._table,
             columns=[column.key for column in self._columns],
             show="",
             selectmode="browse",
@@ -397,24 +340,15 @@ class Editor(tk.Tk):
         self.tree.tag_configure("even", background="#FFFFFF")
         self.tree.tag_configure("modified", background="#FFF3C4")
         self.tree.grid(row=1, column=0, sticky="nsew")
-        self._draw_headers(header_font)
-
-        y_scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
-        self.x_scroll = ttk.Scrollbar(table, orient="horizontal", command=self._xview)
-        self.tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=self._on_tree_xscroll)
-        y_scroll.grid(row=1, column=1, sticky="ns")
-        self.x_scroll.grid(row=2, column=0, sticky="ew")
-
-        status = ttk.Label(self, textvariable=self.status_var, padding=(12, 6), anchor="w")
-        status.grid(row=3, column=0, sticky="ew")
-
+        self.y_scroll.configure(command=self.tree.yview)
+        self.tree.configure(yscrollcommand=self.y_scroll.set, xscrollcommand=self._on_tree_xscroll)
         self.tree.bind("<Double-1>", self._on_double_click)
         self.tree.bind("<Button-1>", self._on_click, add="+")
         self.tree.bind("<Return>", self._edit_current)
         self.tree.bind("<F2>", self._edit_current)
         self.tree.bind("<MouseWheel>", self._on_wheel)
         self.tree.bind("<Shift-MouseWheel>", self._on_shift_wheel)
-        self._set_actions_enabled(False)
+        self._draw_headers(self._header_font)
 
     def _draw_headers(self, font: tkfont.Font) -> None:
         self.header.delete("all")
@@ -546,8 +480,8 @@ class Editor(tk.Tk):
         spec = self._columns[column_index]
         self._current_record = record_index
         self._current_field = spec.field_index
-        field = FIELDS[spec.field_index]
-        offset = TABLE_START + record_index * RECORD_SIZE + field.offset
+        field = self.fields[spec.field_index]
+        offset = self.profile.table_start + record_index * self.profile.record_size + field.offset
         value = field.format(self._record(record_index))
         access = "только чтение" if not field.editable else "можно изменить"
         self.status_var.set(
@@ -560,7 +494,7 @@ class Editor(tk.Tk):
             return
         column_index = int(column[1:]) - 1
         spec = self._columns[column_index]
-        field = FIELDS[spec.field_index]
+        field = self.fields[spec.field_index]
         if not spec.editable:
             self._remember_cell(row, column)
             self.status_var.set(f"«{field.name}» только для чтения.")
@@ -656,7 +590,7 @@ class Editor(tk.Tk):
         field_index = self._editor_field
         extra = set(self._editor_extra)
         self._cancel_editor()
-        field = FIELDS[field_index]
+        field = self.fields[field_index]
         value = parse_field_text(field, text, extra)
         if value is None:
             self.status_var.set(_invalid_message(field))
@@ -667,12 +601,12 @@ class Editor(tk.Tk):
         return "break"
 
     def _open_adjacent(self, record_index: int, field_index: int, step: int) -> None:
-        count = len(FIELDS)
+        count = len(self.fields)
         cursor = record_index * count + field_index + step
-        last = RECORD_COUNT * count
+        last = self.profile.record_count * count
         while 0 <= cursor < last:
             record, field = divmod(cursor, count)
-            if FIELDS[field].editable:
+            if self.fields[field].editable:
                 self._begin_edit(str(record), f"#{field + 1}")
                 return
             cursor += step
@@ -680,10 +614,10 @@ class Editor(tk.Tk):
     def _write_field(
         self, record_index: int, field_index: int, value: bytes, record_history: bool
     ) -> bool:
-        field = FIELDS[field_index]
+        field = self.fields[field_index]
         if not field.editable:
             return False
-        offset = TABLE_START + record_index * RECORD_SIZE + field.offset
+        offset = self.profile.table_start + record_index * self.profile.record_size + field.offset
         old = bytes(self.image[offset : offset + field.size])
         if old == value:
             self._refresh_row(record_index)
@@ -748,18 +682,18 @@ class Editor(tk.Tk):
         self.status_var.set("Правки отменены.")
 
     def _record(self, index: int) -> bytes:
-        start = TABLE_START + index * RECORD_SIZE
-        return bytes(self.image[start : start + RECORD_SIZE])
+        start = self.profile.table_start + index * self.profile.record_size
+        return bytes(self.image[start : start + self.profile.record_size])
 
     def _baseline_record(self, index: int) -> bytes:
-        start = TABLE_START + index * RECORD_SIZE
-        return bytes(self.baseline[start : start + RECORD_SIZE])
+        start = self.profile.table_start + index * self.profile.record_size
+        return bytes(self.baseline[start : start + self.profile.record_size])
 
     def _fill_table(self) -> None:
         self.tree.delete(*self.tree.get_children())
-        for index in range(RECORD_COUNT):
+        for index in range(self.profile.record_count):
             self.tree.insert("", "end", iid=str(index), values=self._row_values(index), tags=(self._row_tag(index),))
-        if RECORD_COUNT:
+        if self.profile.record_count:
             self.tree.selection_set("0")
             self.tree.focus("0")
 
@@ -770,7 +704,7 @@ class Editor(tk.Tk):
 
     def _row_values(self, index: int) -> tuple[str, ...]:
         record = self._record(index)
-        return tuple(field.format(record) for field in FIELDS)
+        return tuple(field.format(record) for field in self.fields)
 
     def _row_tag(self, index: int) -> str:
         if self._record(index) != self._baseline_record(index):
@@ -780,8 +714,9 @@ class Editor(tk.Tk):
     def _changed_table_bytes(self) -> int:
         if not self.image:
             return 0
-        end = TABLE_END + 1
-        return sum(1 for index in range(TABLE_START, end) if self.image[index] != self.baseline[index])
+        start = self.profile.table_start
+        end = self.profile.table_end + 1
+        return sum(1 for index in range(start, end) if self.image[index] != self.baseline[index])
 
     def _refresh_checksums(self) -> None:
         if self.document is None or self.block is None:
@@ -819,9 +754,6 @@ class Editor(tk.Tk):
         mark = "*" if self.image != self.baseline else ""
         self.title(f"{APP_TITLE} — {name}{mark}")
 
-    def _reference_container_header(self) -> bytes:
-        return REFERENCE_HEADER
-
     def _set_window_icon(self) -> None:
         icon = _asset_path("app.ico")
         if not icon.is_file():
@@ -855,18 +787,19 @@ class Editor(tk.Tk):
         self._cancel_editor()
         try:
             document = sgo.parse_sgo(path)
-            if sgo.container_header(document.raw) != self._reference_container_header():
+            profile = match_firmware(sgo.container_header(document.raw))
+            if profile is None:
                 raise ValueError(
-                    "Заголовок SGO не совпадает с эталоном 3AA698109__0042.\n"
-                    "Контрольные суммы при сравнении не учитываются.\n"
-                    "Смещения таблицы констант действительны только для этой версии прошивки."
+                    "Заголовок SGO не совпадает с поддерживаемыми прошивками.\n"
+                    "Контрольные суммы при сравнении не учитываются.\n\n"
+                    f"Поддерживаются:\n{supported_firmware_names()}"
                 )
             block = sgo.calibration_block(document)
             image = sgo.decode_block(document, block)
-            if TABLE_END >= len(image):
+            if profile.table_end >= len(image):
                 raise ValueError(
-                    f"Таблица 0x{TABLE_START:X}–0x{TABLE_END:X} не помещается в блок "
-                    f"размером 0x{len(image):X}"
+                    f"Таблица 0x{profile.table_start:X}–0x{profile.table_end:X} "
+                    f"не помещается в блок размером 0x{len(image):X}"
                 )
             bin_info = sgo.calc_bin_checksum(image)
             file_checksum = sgo.stored_file_checksum(document.raw)
@@ -877,7 +810,17 @@ class Editor(tk.Tk):
             return
 
         self.document = document
+        self.profile = profile
         self.block = block
+        self._install_fields(
+            bind_choices(
+                profile.fields,
+                image,
+                profile.table_start,
+                profile.record_size,
+                profile.record_count,
+            )
+        )
         self.path = path
         self.image = image
         self.baseline = bytearray(image)
@@ -890,6 +833,10 @@ class Editor(tk.Tk):
         self._current_field = None
 
         self.file_var.set(f"Файл: {path}    {document.identification}")
+        self.table_var.set(
+            f"Таблица {profile.name}: bin 0x{profile.table_start:06X}–0x{profile.table_end:06X}, "
+            f"{profile.record_count} записей по {profile.record_size} байта"
+        )
         self.block_var.set(
             f"Блок №{block.index}: память 0x{block.start_address:06X}–0x{block.end_address:06X}, "
             f"{block.size} байт"
@@ -989,7 +936,9 @@ class Editor(tk.Tk):
         messagebox.showinfo(
             "О программе",
             f"Навайбкодил М. Калугин в 2026 году.\n\n"
-            "Правка прошивки ABS 3AA698109__0042.sgo под любые моторы и трансмиссии.\n\n"
+            "Правка прошивок ABS 3AA698109__0042, 3AA614109__0023, 3AA614109__0061, 5N0614109__0023, 5N0614109__0161 и 8U0614109__0406.\n"
+            "Колонки у этих версий одни и те же, адрес таблицы свой.\n"
+            "Списки значений читаются из таблицы открытого файла.\n\n"
             "Обратите внимание: для того, чтобы ABS принял мотор, необходимо, чтобы выполнялись следующие условия: \n\n"
             "1. Тип трансмиссии.\n"
             "Сверяется с сигналом `MO2_Getr_Code` (mMotor_2, ID 0x288): DSG 2WD = `0x0B`, MT 4WD = `0x0F`\n\n"
@@ -1023,7 +972,7 @@ def _write_bytes_atomic(path: Path, data: bytes) -> None:
 
 
 def _format_stored(field: Field, stored: bytes) -> str:
-    record = bytearray(RECORD_SIZE)
+    record = bytearray(field.offset + field.size)
     record[field.offset : field.offset + field.size] = stored
     return field.format(record)
 

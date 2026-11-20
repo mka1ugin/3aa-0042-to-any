@@ -24,7 +24,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="3AA_0042_to_any",
+    name="VAG_TRW450_to_any",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
